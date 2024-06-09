@@ -23,7 +23,7 @@ mkdir -p postgres/data
 mkdir -p redis_data
 sleep 3
 echo '正在克隆项目,如果404自行替换地址添加代理'
-git clone https://github.com/hjdhnx/hipy-server.git
+git clone https://github.com/woshishiq1/hipy-server.git
 sleep 3
 git clone https://github.com/hjdhnx/hipy-ui.git
 echo '克隆项目完成'
