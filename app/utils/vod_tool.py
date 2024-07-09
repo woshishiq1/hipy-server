@@ -3,10 +3,12 @@
 # File  : vod_tool.py
 # Author: DaShenHan&道长-----先苦后甜，任凭晚风拂柳颜------
 # Date  : 2024/2/5
+import re
 
 import ujson
 from time import time
 import base64
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import requests
 import warnings
 
@@ -33,6 +35,7 @@ def base_request(_url, _object, _js_type=0, cloudfare=False):
     @param cloudfare: 使用过5秒盾请求
     @return:
     """
+    # print(f'_url:{_url},_object:{_object},_js_type:{_js_type}')
     if cloudfare and _cloudfare_enable:
         s = scraper
     else:
@@ -44,17 +47,34 @@ def base_request(_url, _object, _js_type=0, cloudfare=False):
 
     method = (_object.get('method') or 'get').lower()
     timeout = _object.get('timeout') or 5
+    max_timeout = 30
+    if max_timeout < timeout < 100:
+        # 限制最大30秒超时。如果传的数值大于这个但是小于100，说明错误，自动变成30
+        timeout = max_timeout
+    elif timeout >= 100:
+        # 限制最大30秒超时。如果传的数值大于100，说明是把毫秒和秒理解错误，自动除以1000
+        timeout = round(timeout / 1000, 2)
+    # print(f'timeout:{timeout}')
     body = _object.get('body') or ''
+    encoding = _object.get('encoding') or 'utf-8'
     data = _object.get('data') or {}
-    headers = _object.get('headers') or {}
-    headers = dict(headers)
-    for key, value in headers.items():
-        headers[key] = str(value)
+    _headers = _object.get('headers') or {}
+    _headers = dict(_headers)
+    headers = {}
+    for key, value in _headers.items():
+        headers[str(key).lower()] = str(value)
+
+    if headers.get('content-type') and re.search('charset=(.*)', headers['content-type'], re.I):
+        try:
+            encoding = re.search('charset=(.*)', headers['content-type'], re.I).groups()[0]
+        except:
+            pass
 
     if body and not data:
         if '&' in body:
             for p in body.split('&'):
-                k, v = p.split('=')
+                k = p.split('=')[0]
+                v = '='.join(p.split('=')[1:])
                 data[k] = v
             # 修复pythonmonkey没有自动把 JSObjectProxy 转为python的dict导致的后续错误
             data = dict(data)
@@ -63,22 +83,22 @@ def base_request(_url, _object, _js_type=0, cloudfare=False):
 
     elif not body and data and method != 'get':
         content_type_keys = [key for key in headers if key.lower() == 'content-type']
-        content_type = 'application/json'
+        default_type = 'application/json'
+        content_type = default_type
         if content_type_keys:
             content_type_key = content_type_keys[-1]
             old_content_type = headers[content_type_key]
-            if content_type not in old_content_type:
-                headers[content_type_key] = content_type
+            # if content_type not in old_content_type:
+            #     headers[content_type_key] = content_type
+            content_type = old_content_type
         else:
-            headers['Content-Type'] = content_type
+            headers['Content-Type'] = default_type
 
-        if isinstance(data, dict):
+        if isinstance(data, dict) and default_type in content_type:
             data = ujson.dumps(data, ensure_ascii=False)
 
-    encoding = _object.get('encoding') or 'utf-8'
     buffer = _object.get('buffer') or 1
     redirect = False if _object.get('redirect') == 0 or _object.get('redirect') == False else True
-
     withHeaders = bool(_object.get('withHeaders') or False)
     r = None
     r_text = ''
@@ -160,6 +180,27 @@ def req(_url, _object):
     @return:
     """
     return base_request(_url, _object, 1)
+
+
+def batchFetch(items, max_workers=16):
+    """
+    海阔视界批量请求 [{url:'',options:{}},{url:'',options:{}}]
+    batchFetch([{url:'http://www.a.cn', options:{headers:{},body:'a=1&b=2',method:'POST'}}, {url:'http://www.b.cn'}]);setError(data[0] + '=====' + data[1]);
+    @param items:
+    @param max_workers:
+    @return:
+    """
+    # print(items)
+    results = [None for item in items]
+    with ThreadPoolExecutor(max_workers=min(len(items), max_workers)) as pool:
+        tasks = [pool.submit(fetch, item.get('url'), item.get('options')) for item in
+                 items]  # 构造一个列表，循环向线程池内submit提交执行的方法
+        try:
+            pool.shutdown(wait=True)  # 线程数等待所有线程结束，这里 卡住主线程
+            results = [task.result() for task in tasks]
+        except Exception as e:
+            print(f'执行batchFetch发生了错误:{e}')
+    return results
 
 
 def 重定向(_url: str):

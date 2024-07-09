@@ -7,6 +7,7 @@
 
 
 from time import time
+from datetime import datetime
 import ujson
 from urllib.parse import urlparse, parse_qs, urljoin
 from fastapi import APIRouter, Depends, Query, WebSocket, Request as Req, HTTPException
@@ -15,6 +16,7 @@ import os
 from common import error_code, deps
 from sqlalchemy.orm import Session
 from sqlalchemy import asc
+from core.constants import REDIS_KEY_LOGIN_TOKEN_KEY_PREFIX
 from core.config import settings
 from core.logger import logger
 from utils.web import htmler, render_template_string, remove_comments, parseJson
@@ -31,6 +33,9 @@ from fastapi.responses import FileResponse
 from apps.system.curd.curd_dict_data import curd_dict_data
 from apps.vod.curd.curd_rules import curd_vod_rules
 from apps.vod.curd.curd_configs import curd_vod_configs
+from apps.vod.curd.curd_subs import curd_vod_subs
+from apps.vod.views.views_rules import doRefresh
+from apps.permission.curd.curd_user import curd_user
 from pathlib import Path
 import ast
 import requests
@@ -143,6 +148,45 @@ async def hipy_configs(*,
                        request: Req,
                        mode: int = Query(..., title="模式 0:t4 1:t3"),
                        ):
+    def getParams(key=None, value=''):
+        return request.query_params.get(key) or value
+
+    sub_info = None
+    sub = getParams('sub')
+    # 给默认订阅码，后续自动加入到api接口中。
+    default_sub = sub
+    token = request.headers.get("token")
+    # t4跳过token检查。如果不传sub且有用户token的话就按全部的数据来展示
+    step_token_check = False
+    if token:
+        uid = await r.get(REDIS_KEY_LOGIN_TOKEN_KEY_PREFIX + token)
+        if uid:
+            step_token_check = True
+            # 如果有uid就step_token_check并且查出来一个默认匹配.*的记录的sub订阅码给默认接口
+            if not sub:
+                match_all_subs = curd_vod_subs.search(db, reg='.*', status=1)
+                # print(match_all_subs)
+                if match_all_subs['total'] > 0:
+                    default_sub = match_all_subs['results'][0]['code']
+                    # print(f'default_sub:{default_sub}')
+
+    has_sub = False if step_token_check and not default_sub else curd_vod_subs.isExists(db)
+    if has_sub:
+        if not default_sub or len(default_sub) < 6:
+            return respErrorJson(error_code.ERROR_PARAMETER_ERROR.set_msg(f'参数【sub】不正确'))
+        sub_record = curd_vod_subs.getByCode(db, default_sub)
+        if not sub_record:
+            return respErrorJson(error_code.ERROR_PARAMETER_ERROR.set_msg(f'不存在此订阅码:【{default_sub}】'))
+        if sub_record.status == 0:
+            return respErrorJson(error_code.ERROR_PARAMETER_ERROR.set_msg(f'此订阅码:【{default_sub}】已禁用'))
+        if sub_record.due_time:
+            current_time = datetime.now()
+            if current_time > sub_record.due_time:
+                return respErrorJson(error_code.ERROR_NOT_FOUND.set_msg(
+                    f'此订阅码【{default_sub}】已过期。到期时间为:{sub_record.due_time},当前时间为:{current_time.strftime("%Y-%m-%d %H:%M:%S")}'))
+
+        sub_info = sub_record.dict()
+    print('sub_info:', sub_info)
     t1 = time()
     # 检测是否内网ip，如果是内网环境，不使用api_domain
     private_ip = re.compile(
@@ -165,6 +209,8 @@ async def hipy_configs(*,
     # print(hipy_rules.get('results')[0])
     hipy_rules = [{
         'name': rec['name'],
+        # 增加ext_name属性用于模板渲染key和name
+        'ext_name': rec['name'],
         'file_type': rec['file_type'],
         'ext': rec['ext'] or '',
         'searchable': rec['searchable'],
@@ -173,8 +219,11 @@ async def hipy_configs(*,
         'order_num': rec['order_num'],
     } for rec in hipy_rules.get('results') or [] if rec['active'] and rec['is_exist']]
 
-    drpy_rules = [{
+    # 定义个基础版的
+    base_drpy_rules = [{
         'name': rec['name'],
+        # 增加ext_name属性用于模板渲染key和name
+        'ext_name': rec['name'],
         'file_type': rec['file_type'],
         'ext': rec['ext'] or '',
         'searchable': rec['searchable'],
@@ -182,6 +231,29 @@ async def hipy_configs(*,
         'filterable': rec['filterable'],
         'order_num': rec['order_num'],
     } for rec in drpy_rules.get('results') or [] if rec['active'] and rec['is_exist']]
+
+    drpy_rules = []
+    for base_rule in base_drpy_rules:
+        # 多个传参
+        if base_rule['ext'] and len(base_rule['ext'].split('\n')) > 1:
+            i = 1
+            for rule_ext in base_rule['ext'].split('\n'):
+                ext_rule = base_rule.copy()
+                ext_param = rule_ext
+                ext_str = ext_param
+                ext_name = ext_rule['ext_name'] + str(i)
+                if '@' in ext_param:
+                    ext_str = ext_param.split('@')[0]
+                    ext_name = ext_param.split('@')[1] or ext_name
+
+                ext_rule['ext'] = ext_str
+                ext_rule['ext_name'] = ext_name
+
+                drpy_rules.append(ext_rule)
+
+                i += 1
+        else:
+            drpy_rules.append(base_rule)
 
     # print(hipy_rules)
     # print(drpy_rules)
@@ -328,15 +400,30 @@ async def hipy_configs(*,
             render_dict = ast.literal_eval(render_text)
             if custom_content and custom_dict:
                 merge_config(render_dict, custom_dict)
-                render_dict['cost_time'] = get_interval(t1)
-                render_text = ujson.dumps(render_dict, ensure_ascii=False, indent=4)
-            else:
-                render_dict['cost_time'] = get_interval(t1)
+                # render_text = ujson.dumps(render_dict, ensure_ascii=False, indent=4)
+
             # print(render_dict)
             # return HTMLResponse(render_text)
             # rules经过{{host}}渲染后这里不需要二次渲染
             # render_text = render_template_string(render_text, **context)
             # return Response(status_code=200, media_type='text/plain', content=render_text)
+            if sub_info:
+                if sub_info.get('mode') == 0:
+                    render_dict['sites'] = [site for site in render_dict['sites'] if
+                                            re.search(sub_info.get('reg') or '.*', site['name'], re.I)]
+                elif sub_info.get('mode') == 1:
+                    render_dict['sites'] = [site for site in render_dict['sites'] if
+                                            not re.search(sub_info.get('reg') or '.*', site['name'], re.I)]
+                # 增加t4订阅防盗
+                if mode == 0:
+                    for site in render_dict['sites']:
+                        if site.get('type') and site['type'] == 4 and site.get('api'):
+                            if '?' in site['api']:
+                                site['api'] += f'&sub={default_sub}'
+                            else:
+                                site['api'] += f'?sub={default_sub}'
+
+            render_dict['cost_time'] = get_interval(t1)
             return respVodJson(render_dict)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"{e}")
@@ -673,6 +760,22 @@ async def database_update(obj: database_schemas.updateSchema):
     else:
         # return respErrorJson(error=error_code.ERROR_DATABASE_AUTH_ERROR)
         return respSuccessJson(data={"error": error_code.ERROR_DATABASE_AUTH_ERROR.msg})
+
+
+@router.put('/rules_refresh', summary="刷新源列表")
+async def rules_refresh(*,
+                        db: Session = Depends(deps.get_db),
+                        r: asyncRedis = Depends(deps.get_redis),
+                        obj: database_schemas.updateSchema):
+    u = {'id': 1, 'name': 'admin'}
+    user_admin = curd_user.getByUserName(db, 'admin')
+    if user_admin:
+        u = user_admin.dict()
+    if obj.auth_code == settings.DATABASE_UPDATE_AUTH:
+        resp = await doRefresh(db, r, u)
+        return resp
+    else:
+        return respSuccessJson(data={"error": error_code.ERROR_RULES_REFRESH_AUTH_ERROR.msg})
 
 
 @router.websocket("/ws")

@@ -88,6 +88,8 @@ class Drpy:
 
     @staticmethod
     def toDict(_object):
+        if isinstance(_object, (type(None), str, bool, float, int)):
+            return _object
         return ujson.loads(_object.json())
 
     @staticmethod
@@ -114,8 +116,11 @@ class Drpy:
     def init(self, extend=""):
         self.call('init', extend)
 
-    def homeContent(self, filter=None):
-        return self.setDict(self.call('home', filter))
+    def getRule(self, key=None):
+        return self.toDict(self.call('getRule', key))
+
+    def homeContent(self, filter=None, home_html=None, class_parse=None):
+        return self.setDict(self.call('home', filter, home_html, class_parse))
 
     def homeVideoContent(self):
         return self.setDict(self.call('homeVod'))

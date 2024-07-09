@@ -9,12 +9,13 @@
 [并发测试](https://runnergo.apipost.cn/)  
 [android tv_box推荐下载](https://wwi.lanzoup.com/igYqY1wazxmj)  
 [android mobile_box推荐下载【tb】](https://wwi.lanzoup.com/ioaM11yjw0li)  
-[android mobile_box推荐下载【eb】](https://wwi.lanzoup.com/io6GH20tbimd)  
-[PC Player推荐下载](https://wwi.lanzoup.com/iB5x120u1dpc)  
+[android mobile_box推荐下载【eb】](https://wwi.lanzoup.com/i7upK22zygwh)  
+[PC Player推荐下载](https://wwi.lanzoup.com/i2VgY22zyk7g)  
 [PC 嗅探器推荐下载](https://wwi.lanzoup.com/i4h1T1ztt8fi)  
 [gpt-4o免费用](https://www.coze.com/s/Zs8Mqh1pY/)  
 [gpt-4o写筛选](https://www.coze.com/s/Zs8MqmrBF/)  
 [写源简述](./写源简述.md)  
+[未来计划](./未来计划.md)  
 
 #### zy佬一键部署
 ```shell
@@ -29,7 +30,8 @@ bash -c "$(curl -fsSLk https://zy.catni.cn/release/latest/setup.sh)"
 [ws,jinja](https://www.jianshu.com/p/ca9b257a1a44)  
 [cachetools文档](https://cachetools.readthedocs.io/en/stable/#cachetools.Cache)  
 [alembic参考文档](https://zhuanlan.zhihu.com/p/306898869?utm_id=0)
-[playwright参考文档](https://playwright.dev/python/docs/api/class-playwright)
+[playwright参考文档](https://playwright.dev/python/docs/api/class-playwright)  
+[zyplayer参考](https://wwi.lanzoup.com/iPbFb23bpdaf)
 
 
 
